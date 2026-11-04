@@ -1,15 +1,26 @@
--r ../requirements/langchain.txt
+# Web application framework
+streamlit
+streamlit-chat==0.1.1
 
-# Project-specific — financial data & analytics
+# AWS Bedrock & AI orchestration
+boto3
+botocore
+langchain
+langchain-aws
+langchain-community
+anthropic==0.40.0
+transformers==4.53.0
+
+# Financial data & analytics
 yfinance==0.2.40
 pandas==2.2.1
-plotly==5.16.0
-prophet==1.1.5
+pandas-datareader==0.10.0
+vnstock3
 numpy==1.26.4
 scikit-learn==1.5.1
-bs4==0.0.2
-streamlit-chat==0.1.1
-pandas-datareader==0.10.0
-anthropic==0.40.0
+prophet==1.1.5
+
+# Visualisation & utilities
+plotly==5.16.0
 seaborn==0.13.2
-transformers==4.53.0
+bs4==0.0.2
