@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 import boto3, json
 import pandas_datareader as pdr
 import base
-
+import yfinance as yf
 st.set_page_config(page_title="Phân tích kỹ thuật cổ phiếu", page_icon="img/favicon.ico", layout="wide")
 st.markdown(
   """
@@ -39,14 +39,18 @@ infoType = st.sidebar.radio("Chọn kiểu phân tích", ('PTKT', 'PTCB'))
 def get_stock_price(ticker, history=500):
     today = dt.datetime.today()
     start_date = today - dt.timedelta(days=history)
-    df_price = pdr.get_data_yahoo(ticker, start=start_date, end=today)
-    #print(df_price)
+    df_price = yf.download(ticker, start=start_date, end=today)
+    if not df_price.empty:
+        df_price = df_price.reset_index()
     return df_price
 
 def plot_stock_price(ticker, history=500):
     df_price = get_stock_price(ticker, history)
-    # Create the price chart
-    fig = go.Figure(df_price=[go.Scatter(x=df['Date'], y=df_price['Adj Close'], mode='lines', name='Adjusted Close')])
+    if df_price.empty:
+        st.warning(f"No price data found for {ticker}")
+        return
+
+    fig = go.Figure(go.Scatter(x=df_price['Date'], y=df_price['Close'], mode='lines', name='Close Price'))
     fig.update_layout(
         title=f'Stock Price for {ticker}',
         xaxis_title='Date',
@@ -74,7 +78,7 @@ def call_claude_sonet_stream(prompt):
 
     body = json.dumps(prompt_config)
 
-    modelId = "anthropic.claude-sonnet-4-6"
+    modelId = "us.anthropic.claude-sonnet-4-6"
     accept = "application/json"
     contentType = "application/json"
 

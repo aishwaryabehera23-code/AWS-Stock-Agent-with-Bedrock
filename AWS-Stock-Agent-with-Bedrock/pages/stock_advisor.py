@@ -1,21 +1,16 @@
-from langchain_community.retrievers import AmazonKnowledgeBasesRetriever
 import streamlit as st
-from streamlit_chat import message
 import boto3
 import json
-from anthropic import Anthropic
-import base
+import os
+from dotenv import load_dotenv
 
-anthropic = Anthropic()
+load_dotenv()
 
-#knowledge_base_id=('EWVHJIY9AS'),
-knowledge_base_id=('GDPSQICWNW'),
-#modelId = "anthropic.claude-3-haiku-20240307-v1:0"
-modelId = "anthropic.claude-sonnet-4-6"
+modelId = "amazon.nova-micro-v1:0"
 
-st.set_page_config(page_title="Tra cứu thông tin chứng khoán", page_icon="img/favicon.ico", layout="wide")
+st.set_page_config(page_title="Tra cứu thông tin chứng khoán", page_icon="📈")
 st.markdown(
-  """
+    """
     <style>
         .reportview-container {
             margin-top: -2em;
@@ -25,91 +20,65 @@ st.markdown(
         footer {visibility: hidden;}
         #stDecoration {display:none;}
     </style>
-  """, 
-  unsafe_allow_html=True
+    """,
+    unsafe_allow_html=True
 )
 
-st.title('Tra cứu thông tin chứng khoán')
-
-def count_tokens(text):
-    return len(anthropic.get_tokenizer().encode(text))
-
-base.init_home_state("RoboStock - Your 24/7 AI financial companion")
-base.init_slidebar()
-base.init_dialog()
-base.init_animation()
-
+st.title("Tra cứu thông tin chứng khoán")
 
 def generate_response(prompt):
-    bedrock = boto3.client(service_name="bedrock-runtime")  
+    bedrock = boto3.client(service_name="bedrock-runtime", region_name="us-east-1")
     
-    retriever = AmazonKnowledgeBasesRetriever(
-        knowledge_base_id = knowledge_base_id[0], 
-        top_k = 5,
-        retrieval_config = {
-            "vectorSearchConfiguration": {
-                "numberOfResults": 5, 
-                'overrideSearchType': "SEMANTIC"
-            }
-        }
-    )
-    
-    retrieved_docs = retriever.get_relevant_documents(prompt + " 2024")
-    context = "\n".join([doc.page_content for doc in retrieved_docs])
-    conversation_history = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in st.session_state['messages']])
-
-    query = f"""Human: {base.system_prompt}. Based on the provided context, provide the answer to the following question:
-    <context>{context}</context>
-    <conversation_history>{conversation_history}</conversation_history>
-    <question>{prompt} </question>
-    Remember, while you can offer analysis and insights, you should not make definitive predictions about future market movements or provide personalized financial advice.
-    Assistant: 
-    """
- 
     prompt_config = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 2000,
         "messages": [
-            {"role": "user", "content": query}
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": f"You are a helpful stock and financial advisor. Provide actionable insights and market analysis for this query: {prompt}"
+                    }
+                ]
+            }
         ],
-        "temperature": 0.7,
-        "top_p": 1,
+        "inferenceConfig": {
+            "maxTokens": 1500,
+            "temperature": 0.7,
+            "topP": 0.9
+        }
     }
     
     response = bedrock.invoke_model_with_response_stream(
         body=json.dumps(prompt_config),
         modelId=modelId,
-        accept="application/json", 
+        accept="application/json",
         contentType="application/json"
     )
-
-    stream = response['body']
+    
+    stream = response.get("body")
     if stream:
         for event in stream:
-            chunk = event.get('chunk')
+            chunk = event.get("chunk")
             if chunk:
-                chunk_obj = json.loads(chunk.get('bytes').decode())
-                if 'delta' in chunk_obj:
-                    delta_obj = chunk_obj.get('delta', None)
-                    if delta_obj:
-                        text = delta_obj.get('text', None)
+                chunk_obj = json.loads(chunk.get("bytes").decode())
+                if "contentBlockDelta" in chunk_obj:
+                    text = chunk_obj["contentBlockDelta"]["delta"].get("text", "")
+                    if text:
                         yield text
 
+if "advisor_messages" not in st.session_state:
+    st.session_state.advisor_messages = []
 
-if prompt := st.chat_input():
-    st.session_state.show_animation = False
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    base.right_message(st, prompt)
+for message in st.session_state.advisor_messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if st.session_state.messages[-1]["role"] != "assistant":
-    st.session_state.show_animation = False
-    with st.chat_message(
-        "user",
-        avatar="img/fcj.png",
-    ):
-        if prompt:
-            response = generate_response(prompt)
-            full_response = st.write_stream(response)
-            message = {"role": "assistant", "content": full_response}
-            st.session_state.messages.append(message)
+if prompt := st.chat_input("Nhập câu hỏi của bạn về chứng khoán..."):
+    st.session_state.advisor_messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
+    with st.chat_message("assistant"):
+        response = generate_response(prompt)
+        full_response = st.write_stream(response)
+        
+    st.session_state.advisor_messages.append({"role": "assistant", "content": full_response})

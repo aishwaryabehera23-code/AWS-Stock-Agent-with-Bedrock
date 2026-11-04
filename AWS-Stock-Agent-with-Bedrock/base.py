@@ -313,7 +313,7 @@ def clear_stock_advisor():
     st.session_state['total_tokens'] = []
     #counter_placeholder.write(f"Total cost of this conversation: $${st.session_state['total_cost']:.5f}")
 
-@st.experimental_dialog("How to use First GenAI Journey", width=1920)
+## dialog removed
 def show_video(video_url):
     st.video(video_url, loop=False, autoplay=True, muted=False)
 

@@ -111,3 +111,23 @@ img/*
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+# Virtual environment
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local credentials & secrets
+.env
+*.env
+credentials
+config.json
+
+# Streamlit local settings
+.streamlit/secrets.toml
+
+# System files
+.DS_Store
+Thumbs.db

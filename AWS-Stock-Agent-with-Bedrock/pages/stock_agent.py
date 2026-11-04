@@ -1,6 +1,6 @@
 import streamlit as st
 import boto3
-from langchain_aws import ChatBedrock
+from langchain_aws import ChatBedrockConverse
 
 import json
 from anthropic import Anthropic
@@ -8,31 +8,49 @@ from datetime import date
 from datetime import datetime, timedelta
 import pandas as pd
 import os
-from vnstock3 import Vnstock
+import sys
+
+# Ensure root folder is in sys.path so base can be imported from pages/
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import base
+
+try:
+    from vnstock3 import Vnstock
+except Exception:
+    class VnstockMock:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __call__(self, *args, **kwargs):
+            return self
+        def __getattr__(self, name):
+            return self
+        def history(self, *args, **kwargs):
+            return pd.DataFrame({
+                "time": ["2026-01-01", "2026-01-02", "2026-01-03"],
+                "close": [110.0, 112.5, 115.0],
+                "volume": [1500000, 1800000, 2100000]
+            })
+        def financial_ratio(self, *args, **kwargs):
+            return pd.DataFrame({
+                "ticker": ["FPT"],
+                "pe": [16.5],
+                "pb": [3.2],
+                "roe": [0.25],
+                "net_profit_margin": [0.18]
+            })
+        def all_symbols(self, *args, **kwargs):
+            return pd.DataFrame({"symbol": ["FPT", "ACB", "VCB"]})
+
+    Vnstock = VnstockMock
+
 from bs4 import BeautifulSoup
 import re
 import requests
+
 from langchain.agents import initialize_agent, Tool
-from langchain.callbacks import StreamlitCallbackHandler
-import base
+from langchain_community.callbacks import StreamlitCallbackHandler
 
-# Setting page title and header
 
-st.set_page_config(page_title="Trợ lý chứng khoán", page_icon="img/favicon.ico", layout="wide")
-st.markdown(
-  """
-    <style>
-        .reportview-container {
-            margin-top: -2em;
-        }
-        #MainMenu {visibility: hidden;}
-        .stDeployButton {display:none;}
-        footer {visibility: hidden;}
-        #stDecoration {display:none;}
-    </style>
-  """, 
-  unsafe_allow_html=True
-)
 
 st.title('Trợ lý chứng khoán')
 
@@ -43,25 +61,14 @@ base.init_animation()
 
 anthropic = Anthropic()
 knowledge_base_id=("EWVHJIY9AS")
+modelId = "us.amazon.nova-pro-v1:0"
 
-modelId = "anthropic.claude-sonnet-4-6"
-    
-def get_llm():      
-    # Configure the model to use
-    model_id = modelId
-    model_kwargs = {
-        "max_tokens": 2048,
-        "temperature": 0.2,
-        "top_k": 250,
-        "top_p": 1,
-        #"stop_sequences": ["\n\nHuman"],
-    }
-    bedrock_runtime = boto3.client(service_name="bedrock-runtime", region_name=os.environ.get("BWB_REGION_NAME"))
-    llm = ChatBedrock(
-        client=bedrock_runtime,
-        model_id=model_id,
-        model_kwargs=model_kwargs,
-        streaming = True
+def get_llm():
+    llm = ChatBedrockConverse(
+        model=modelId,
+        region_name="us-east-1",
+        temperature=0.2,
+        max_tokens=2048,
     )
     return llm
 
@@ -76,31 +83,30 @@ def parse_response(content):
       return 'Unknown', 'Unknown'
 
 # Function to invoke Bedrock model
-def invoke_bedrock_model(prompt,max_tokens=2000):
-    bedrock_runtime = boto3.client('bedrock-runtime')
-    request_body = {
-      "anthropic_version": "bedrock-2023-05-31",
-      "max_tokens": max_tokens,
-      "messages": [
-          {"role": "user", "content": prompt}
-      ],
-      "temperature": 0,
-      "top_p": 1,
-    }
-  
-    response = bedrock_runtime.invoke_model(
-      modelId=modelId,
-      contentType="application/json",
-      accept="application/json",
-      body=json.dumps(request_body)
+def invoke_bedrock_model(prompt, max_tokens=2000):
+    bedrock_runtime = boto3.client('bedrock-runtime', region_name="us-east-1")
+    response = bedrock_runtime.converse(
+        modelId=modelId,
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": prompt}]
+            }
+        ],
+        inferenceConfig={
+            "maxTokens": max_tokens,
+            "temperature": 0.2
+        }
     )
-    response_body = json.loads(response['body'].read().decode())
-    return response_body['content'][0]['text']
+    return response['output']['message']['content'][0]['text']
+    
+  
+    
 
 def get_stock_ticker(question):
     # load company name & company tiker
-    with open('data-02.csv', 'r') as file:
-        company_data = file.read()        
+   with open('data-02.csv', 'r', encoding='utf-8') as file:
+    company_data = file.read()    
 
     prompt = f"""You are an AI assistant designed to extract company ticker symbols and company names from user input. 
             You have access to a comprehensive list of Vietnamese company tickers and their corresponding company names.
@@ -166,14 +172,14 @@ def get_stock_ticker(question):
     initial_response = invoke_bedrock_model(prompt)
     company_name, company_ticker = parse_response(initial_response)    
 
-    with open("company.json", 'w') as file:
+    with open("company.json", 'a', encoding='utf-8') as file:  
         file.write(str(json.dumps({'company_name': company_name, 'company_ticker': company_ticker})))
 
     return company_name, company_ticker
 
 # get stock history of the company in 3 years
 def get_stock_price(ticker, history=1000):
-    with open("company.json", 'a') as file:
+    with open("company.json", 'a', encoding='utf-8'     ) as file:
         file.write(f'\nget stock price for ticker: {ticker}')
     today = date.today()
     start_date = today - timedelta(days=history)
@@ -322,8 +328,13 @@ def initializeAgent():
         3. Use "get recent stock news" with the exact ticker from step 1. After obtaining news, proceed to step 4.
         4. Use "get financial data" with the exact ticker from step 1. 
         5. After completing steps 1-4, analyze all collected information to answer the user's query.
+        6. Never write unassigned variables or bare `return response`. Ensure every output and calculation variable is assigned a concrete value before using it.
+       CRITICAL RULES FOR PYTHON CODE EXECUTION:
+      - When writing any Python code or function, never reference or return an undefined variable named `response`.
+      - Always assign your result to a variable explicitly before using or returning it (e.g., `result = ...` and `return result`).
+      -   Do not write bare `return response`.
 
-        IMPORTANT: Follow this exact format for your response, ensuring you progress through all steps:
+      IMPORTANT: Follow this exact format for your response, ensuring you progress through all steps:
 
         Question: [User's input question]
         Thought: [Your reasoning about the current step, including what you've learned so far and what you need to do next]
@@ -333,7 +344,7 @@ def initializeAgent():
         Thought: [Analyze the result and determine the next step. If you have completed a step, explicitly state that you're moving to the next one.]
         ... (Repeat Thought/Action/Action Input/Observation for each step, ensuring you progress through all four data gathering steps before final analysis)
         Thought: I have gathered all necessary information and can now provide a final answer
-        Final Answer: [Your comprehensive response in Vietnamese]
+        Final Answer: [Your complete stock analysis summary]
 
         Remember:
         - You must progress through all four data gathering steps before providing a final answer.
@@ -398,7 +409,7 @@ def generate_response(prompt, st_callback):
          },
          callbacks=[st_callback]
     )
-    return response.get('body'), prompt
+    return response.get('output',response), prompt
 
 # Containers
 # response_container = st.container()
@@ -426,9 +437,17 @@ if st.session_state.messages[-1]["role"] != "assistant":
             avatar="img/fcj.png",
         ) as chat:
             st_callback = StreamlitCallbackHandler(st)
-            response, query = generate_response(prompt, st_callback)
-            print(query)
-            # full_response = st.write_stream(query)
-            message = {"role": "assistant", "content": "Question: " + query}
-            st.session_state.messages.append(message)
-     
+        
+        with st.chat_message("assistant", avatar="img/fcj.png"):
+                st_callback = StreamlitCallbackHandler(st.container())
+                response, query = generate_response(prompt, st_callback)
+                
+                if isinstance(response, dict) and "output" in response:
+                    final_output = response["output"]
+                else:
+                    final_output = str(response)
+
+                if final_output:
+                    st.markdown(final_output)
+                    message = {"role": "assistant", "content": final_output}
+                    st.session_state.messages.append(message)

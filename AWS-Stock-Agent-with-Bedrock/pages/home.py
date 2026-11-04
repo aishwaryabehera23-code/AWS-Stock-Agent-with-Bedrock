@@ -1,56 +1,64 @@
 import streamlit as st
-import streamlit.components.v1 as components
-import libs as glib 
-import base
+import boto3
+import json
 
-def generate_response(prompt):
-    if base.get_num_tokens(prompt) >= 1000000:
-        st.error("Conversation length too long. Please keep it under 1000000 tokens.")
-        st.button(
-            "🗑 Xóa lịch sử chát",
-            on_click=base.clear_chat_history,
-            key="clear_chat_history",
-        )
-        st.stop()
+modelId = "amazon.nova-micro-v1:0"
 
-    response = glib.call_claude_sonet_stream(prompt)
-    return response
+st.set_page_config(page_title="AWS First GenAI Journey", page_icon="🤖")
 
-st.set_page_config(page_title="AWS", page_icon="img/favicon.ico", layout="wide")
-st.markdown(
-  """
-    <style>
-        .reportview-container {
-            margin-top: -2em;
+st.title("AWS First GenAI Journey")
+
+def call_bedrock_stream(prompt):
+    bedrock = boto3.client(service_name="bedrock-runtime", region_name="us-east-1")
+    
+    prompt_config = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"text": prompt}]
+            }
+        ],
+        "inferenceConfig": {
+            "maxTokens": 1000,
+            "temperature": 0.7,
+            "topP": 0.9
         }
-        #MainMenu {visibility: hidden;}
-        .stDeployButton {display:none;}
-        footer {visibility: hidden;}
-        #stDecoration {display:none;}
-    </style>
-  """, 
-  unsafe_allow_html=True
-)
+    }
+    
+    response = bedrock.invoke_model_with_response_stream(
+        body=json.dumps(prompt_config),
+        modelId=modelId,
+        accept="application/json",
+        contentType="application/json"
+    )
+    
+    stream = response.get("body")
+    if stream:
+        for event in stream:
+            chunk = event.get("chunk")
+            if chunk:
+                chunk_obj = json.loads(chunk.get("bytes").decode())
+                if "contentBlockDelta" in chunk_obj:
+                    text = chunk_obj["contentBlockDelta"]["delta"].get("text", "")
+                    if text:
+                        yield text
 
-base.init_home_state(None)
-base.init_slidebar()
-base.init_dialog()
-base.init_animation()
+if "home_messages" not in st.session_state:
+    st.session_state.home_messages = [
+        {"role": "assistant", "content": "Hello! How can I assist you today?"}
+    ]
 
-if prompt := st.chat_input():
-    st.session_state.show_animation = False
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    base.right_message(st, prompt)
+for message in st.session_state.home_messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if st.session_state.messages[-1]["role"] != "assistant":
-    st.session_state.show_animation = False
+if prompt := st.chat_input("Your message"):
+    st.session_state.home_messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-    with st.chat_message(
-        "user",
-        avatar="img/fcj.png",
-    ):
-        if prompt:
-            response = generate_response(prompt)
-            full_response = st.write_stream(response)
-            message = {"role": "assistant", "content": full_response}
-            st.session_state.messages.append(message)
+    with st.chat_message("assistant"):
+        response = call_bedrock_stream(prompt)
+        full_response = st.write_stream(response)
+        
+    st.session_state.home_messages.append({"role": "assistant", "content": full_response})

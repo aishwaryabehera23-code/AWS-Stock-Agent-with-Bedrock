@@ -11,22 +11,44 @@ from langchain.chains import RetrievalQA
 load_dotenv()
 
 def call_claude_sonet_stream(prompt):
+    modelId = "amazon.nova-micro-v1:0"
+
+    bedrock = boto3.client(service_name="bedrock-runtime", region_name="us-east-1")
+
     prompt_config = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 2000,
-        "temperature": 0, 
-        "top_k": 0,
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                ],
+                "content": [{"text": prompt}]
             }
         ],
+        "inferenceConfig": {
+            "maxTokens": 1000,
+            "temperature": 0.7,
+            "topP": 0.9
+        }
     }
 
-    modelId = "anthropic.claude-sonnet-4-6"
+    response = bedrock.invoke_model_with_response_stream(
+        body=json.dumps(prompt_config),
+        modelId=modelId,
+        accept="application/json",
+        contentType="application/json"
+    )
+
+    stream = response.get('body')
+    if stream:
+        for event in stream:
+            chunk = event.get('chunk')
+            if chunk:
+                chunk_obj = json.loads(chunk.get('bytes').decode())
+                if 'contentBlockDelta' in chunk_obj:
+                    text = chunk_obj['contentBlockDelta']['delta'].get('text', '')
+                    if text:
+                        yield text	    
+       		 
+
+    modelId = "us.anthropic.claude-sonnet-4-6"
 
     bedrock = boto3.client(service_name="bedrock-runtime")  
     response = bedrock.invoke_model_with_response_stream(
@@ -137,7 +159,7 @@ def search(question, callback):
 
     model_kwargs_claude = { "temperature": 0.5, "top_p": 1}
     llm = BedrockChat(
-        model_id="anthropic.claude-sonnet-4-6",  # Updated model ID
+        model_id="us.anthropic.claude-sonnet-4-6",
         client=bedrock_client,
         model_kwargs=model_kwargs_claude,
         streaming=True,
@@ -187,10 +209,11 @@ def searchOld(question, callback):
     Answer: 
     """
     model_kwargs_claude = {"max_tokens": 2000}
-    llm = BedrockChat(model_id="anthropic.claude-sonnet-4-6"
-                      , model_kwargs=model_kwargs_claude
-                      , streaming=True
-                      , callbacks=[callback])
+    llm = BedrockChat(
+        model_id="us.anthropic.claude-sonnet-4-6",
+        model_kwargs=model_kwargs_claude,
+       streaming=True,
+        callbacks=[callback])
 
     chain = RetrievalQA.from_chain_type(
         llm=llm, retriever=retriever, return_source_documents=True
